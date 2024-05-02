@@ -1,0 +1,4 @@
+* Could add a ceiling, but it's hardly noticeable in the light reflections.
+* Adjust shadows in accordance with refraction.
+* In light reflections, could cheat and just show a bluish plane where the water is.
+* Make ball move up and down with waves.

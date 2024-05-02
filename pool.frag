@@ -4,7 +4,7 @@
 uniform float u_time;
 uniform vec2 u_resolution;
 
-#define LOW_QUALITY 0
+#define CAMERA_MOVEMENT 1
 
 /* ---------------------------- General Utilities --------------------------- */
 
@@ -28,7 +28,6 @@ struct Material
 float sd_scene(in vec3 p, out int mat, in bool enable_water = true, in bool enable_active_light = true);
 vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera, in Light light);
 
-// XXX: Adjust shadows in accordance with refraction.
 float shadow(in vec3 p, in vec3 incident)
 {
   const float min_t = 0.1;
@@ -106,7 +105,6 @@ vec3 reflection(in vec3 p, in vec3 n, in vec3 camera, in Light light, bool enabl
   for (int i = 0; i < 256 && t <= max_t; i++) {
     int mat;
     vec3 q = 0.002 * n + p + t * ray_dir;
-    // XXX: Could cheat and just show a bluish plane where the water is.
     float dist = sd_scene(q, mat, enable_water);
     if (dist < 0.001) {
       return render_color(q, calc_normal(q), mat, camera, light);
@@ -350,75 +348,65 @@ const float POOL_SIZE_Z = 8.0;
 
 int g_active_light = int(0.5 * u_time) % 4;
 
-// XXX: Could use considerable cleanup.
-float sd_scene(in vec3 p, out int mat, in bool enable_water = true, in bool enable_active_light = true)
+float sd_pool(in vec3 p)
 {
   float edge1 = sd_box(p - vec3(-POOL_SIZE_X, -1.2, 0.0), vec3(0.3, 1.8, POOL_SIZE_Z + 0.3));
   float edge2 = sd_box(p - vec3(POOL_SIZE_X, -1.2, 0.0), vec3(0.3, 1.8, POOL_SIZE_Z + 0.3));
   float edge3 = sd_box(p - vec3(0.0, -1.2, -POOL_SIZE_Z), vec3(POOL_SIZE_X + 0.3, 1.8, 0.3));
   float edge4 = sd_box(p - vec3(0.0, -1.2, POOL_SIZE_Z), vec3(POOL_SIZE_X + 0.3, 1.8, 0.3));
   float bottom = sd_box(p - vec3(0.0, -3.0, 0.0), vec3(POOL_SIZE_X, 0.1, POOL_SIZE_Z));
-  float pool = min(edge1, min(edge2, min(edge3, min(edge4, bottom))));
-  pool += 0.002 * noise(30.0 * p);  // Stipple
+  float dist = min(edge1, min(edge2, min(edge3, min(edge4, bottom))));
+  dist += 0.002 * noise(30.0 * p);  // Stipple
+  return dist;
+}
 
-  float dist = pool;
-
+float sd_room(in vec3 p, out int mat)
+{
   float wall1 = sd_plane(p, vec3(0.0, 0.0, 1.0), 18.0);
   float wall2 = sd_plane(p, vec3(0.0, 0.0, -1.0), 18.0);
   float wall3 = sd_plane(p, vec3(1.0, 0.0, 0.0), 18.0);
   float wall4 = sd_plane(p, vec3(-1.0, 0.0, 0.0), 18.0);
-  float walls = min(wall1, min(wall2, min(wall3, wall4)));
-  dist = min(dist, walls);
-
-  // XXX: ceiling
   float ground = sd_plane(p, vec3(0.0, 1.0, 0.0), 3.0);
-  dist = min(dist, ground);
 
-  // XXX: make ball move up and down with waves?
-  float ball = sd_sphere(p - vec3(0.0, 0.0, 0.0), 2.0);
-  dist = min(dist, ball);
+  float dist = min(wall1, min(wall2, min(wall3, min(wall4, ground))));
 
-  float water = -INFINITY;
-  if (enable_water && abs(p.x) < POOL_SIZE_X && abs(p.z) < POOL_SIZE_Z) {
-    water = p.y - water_height(p.xz);
-    dist = min(dist, water);
-  }
-
-  float lights = -INFINITY;
-  float light1 = sd_sphere(p - vec3(0.0, 10.0, -18.0), 1.8);
-  float light2 = sd_sphere(p - vec3(18.0, 10.0, 0.0), 1.8);
-  float light3 = sd_sphere(p - vec3(0.0, 10.0, 18.0), 1.8);
-  float light4 = sd_sphere(p - vec3(-18.0, 10.0, 0.0), 1.8);
-
-  if (enable_active_light) {
-    lights = min(light1, min(light2, min(light3, light4)));
-  } else {
-    if (g_active_light == 0) {
-      lights = min(light2, min(light3, light4));
-    } else if (g_active_light == 1) {
-      lights = min(light1, min(light3, light4));
-    } else if (g_active_light == 2) {
-      lights = min(light1, min(light2, light4));
-    } else if (g_active_light == 3) {
-      lights = min(light1, min(light2, light3));
-    }
-  }
-
-  dist = min(dist, lights);
-
-  if (dist == pool) {
-    mat = MATERIAL_POOL;
-  } else if (dist == ball) {
-    mat = MATERIAL_BALL;
-  } else if (dist == ground) {
+  if (dist == ground) {
     mat = MATERIAL_GROUND;
   } else if (dist == wall1 || dist == wall2) {
     mat = MATERIAL_XY_WALL;
   } else if (dist == wall3 || dist == wall4) {
     mat = MATERIAL_ZY_WALL;
-  } else if (dist == water) {
-    mat = MATERIAL_WATER;
-  } else if (dist == light1) {
+  }
+
+  return dist;
+}
+
+float sd_water(in vec3 p)
+{
+  return (abs(p.x) < POOL_SIZE_X && abs(p.z) < POOL_SIZE_Z) ? p.y - water_height(p.xz) : INFINITY;
+}
+
+float sd_lights(in vec3 p, out int mat, in bool enable_active_light)
+{
+  float light1 = sd_sphere(p - vec3(0.0, 10.0, -18.0), 1.8);
+  float light2 = sd_sphere(p - vec3(18.0, 10.0, 0.0), 1.8);
+  float light3 = sd_sphere(p - vec3(0.0, 10.0, 18.0), 1.8);
+  float light4 = sd_sphere(p - vec3(-18.0, 10.0, 0.0), 1.8);
+
+  float dist;
+  if (enable_active_light) {
+    dist = min(light1, min(light2, min(light3, light4)));
+  } else if (g_active_light == 0) {
+    dist = min(light2, min(light3, light4));
+  } else if (g_active_light == 1) {
+    dist = min(light1, min(light3, light4));
+  } else if (g_active_light == 2) {
+    dist = min(light1, min(light2, light4));
+  } else if (g_active_light == 3) {
+    dist = min(light1, min(light2, light3));
+  }
+
+  if (dist == light1) {
     mat = MATERIAL_LIGHT1;
   } else if (dist == light2) {
     mat = MATERIAL_LIGHT2;
@@ -431,59 +419,112 @@ float sd_scene(in vec3 p, out int mat, in bool enable_water = true, in bool enab
   return dist;
 }
 
+float sd_scene(in vec3 p, out int mat, in bool enable_water = true, in bool enable_active_light = true)
+{
+  float pool = sd_pool(p);
+  float dist = pool;
+
+  int room_mat;
+  float room = sd_room(p, room_mat);
+  dist = min(dist, room);
+
+  float ball = sd_sphere(p - vec3(0.0, 0.0, 0.0), 2.0);
+  dist = min(dist, ball);
+
+  float water = enable_water ? sd_water(p) : INFINITY;
+  dist = min(dist, water);
+
+  int light_mat;
+  float lights = sd_lights(p, light_mat, enable_active_light);
+  dist = min(dist, lights);
+
+  if (dist == pool) {
+    mat = MATERIAL_POOL;
+  } else if (dist == room) {
+    mat = room_mat;
+  } else if (dist == ball) {
+    mat = MATERIAL_BALL;
+  } else if (dist == water) {
+    mat = MATERIAL_WATER;
+  } else if (dist == lights) {
+    mat = light_mat;
+  }
+
+  return dist;
+}
+
 /* -------------------------------- Rendering ------------------------------- */
 
-// XXX: Could use considerable cleanup.
 vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera, in Light light)
 {
-  vec3 color = vec3(0.0);
-
-  if (mat == MATERIAL_WATER) {
-    if (abs(p.x) < POOL_SIZE_X && abs(p.z) < POOL_SIZE_Z) {
+  switch (mat) {
+    case MATERIAL_WATER: {
       const Material mat = Material(vec3(0.0, 0.25, 0.49), 0.6, 1.0, 1.0, 30.0);
-      color = calc_color(p, n, camera, light, mat);
-      color = mix(vec3(1.0), color, n.y);
+      vec3 color = calc_color(p, n, camera, light, mat);
+      return mix(vec3(1.0), color, n.y);
     }
-  } else if (mat == MATERIAL_POOL) {
-    const Material mat = Material(vec3(0.8), 0.6, 1.0, 0.0, 0.0);
-    color = calc_color(p, n, camera, light, mat);
-  } else if (mat == MATERIAL_BALL) {
-    const Material mat = Material(vec3(1.0, 0.0, 0.0), 0.3, 0.6, 1.0, 60.0);
-    color = calc_color(p, n, camera, light, mat);
-  } else if (mat == MATERIAL_GROUND) {
-#if LOW_QUALITY
-    vec3 tex = checker_texture(p.xz);
-#else
-    vec3 tex = checker_texture_sampled(p.xz, dFdx(p.xz), dFdy(p.xz));
-#endif
-    Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
-    color = calc_color(p, n, camera, light, mat);
-  } else if (mat == MATERIAL_XY_WALL || mat == MATERIAL_ZY_WALL) {
-#if LOW_QUALITY
-    vec3 tex = (mat == MATERIAL_XY_WALL) ? tile_texture(p.xy) : tile_texture(p.zy);
-#else
-    vec3 tex = (mat == MATERIAL_XY_WALL) ?
-      tile_texture_sampled(p.xy, dFdx(p.xy), dFdy(p.xy)) : tile_texture_sampled(p.zy, dFdx(p.zy), dFdy(p.zy));
-#endif
-    Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
-    color = calc_color(p, n, camera, light, mat);
-  } else if (mat == MATERIAL_LIGHT1 || mat == MATERIAL_LIGHT2 ||
-             mat == MATERIAL_LIGHT3 || mat == MATERIAL_LIGHT4) {
-    if (mat == MATERIAL_LIGHT1 && g_active_light == 0 ||
-        mat == MATERIAL_LIGHT2 && g_active_light == 1 ||
-        mat == MATERIAL_LIGHT3 && g_active_light == 2 ||
-        mat == MATERIAL_LIGHT4 && g_active_light == 3) {
-      color = vec3(light.color + 0.3);
-    } else {
+    case MATERIAL_POOL: {
+      const Material mat = Material(vec3(0.8), 0.6, 1.0, 0.0, 0.0);
+      return calc_color(p, n, camera, light, mat);
+    }
+    case MATERIAL_BALL: {
+      const Material mat = Material(vec3(1.0, 0.0, 0.0), 0.3, 0.6, 1.0, 60.0);
+      return calc_color(p, n, camera, light, mat);
+    }
+    case MATERIAL_GROUND: {
+      vec3 tex = checker_texture_sampled(p.xz, dFdx(p.xz), dFdy(p.xz));
+      Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
+      return calc_color(p, n, camera, light, mat);
+    }
+    case MATERIAL_XY_WALL: {
+      vec3 tex = tile_texture_sampled(p.xy, dFdx(p.xy), dFdy(p.xy));
+      Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
+      return calc_color(p, n, camera, light, mat);
+    }
+    case MATERIAL_ZY_WALL: {
+      vec3 tex = tile_texture_sampled(p.zy, dFdx(p.zy), dFdy(p.zy));
+      Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
+      return calc_color(p, n, camera, light, mat);
+    }
+    case MATERIAL_LIGHT1: {
+      if (g_active_light == 0) return vec3(light.color + 0.3);
       const Material mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
-      color = calc_color(p, n, camera, light, mat);
+      return calc_color(p, n, camera, light, mat);
+    }
+    case MATERIAL_LIGHT2: {
+      if (g_active_light == 1) return vec3(light.color + 0.3);
+      const Material mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      return calc_color(p, n, camera, light, mat);
+    }
+    case MATERIAL_LIGHT3: {
+      if (g_active_light == 2) return vec3(light.color + 0.3);
+      const Material mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      return calc_color(p, n, camera, light, mat);
+    }
+    case MATERIAL_LIGHT4: {
+      if (g_active_light == 3) return vec3(light.color + 0.3);
+      const Material mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      return calc_color(p, n, camera, light, mat);
     }
   }
 
-  return color;
+  return vec3(0.0);
 }
 
-// XXX: Could use considerable cleanup.
+Light get_active_light()
+{
+  switch (g_active_light) {
+    case 0:
+      return Light(vec3(0.0, 10.0, -15.0), vec3(0.7));
+    case 1:
+      return Light(vec3(15.0, 10.0, 0.0), vec3(0.7, 0.2, 0.2));
+    case 2:
+      return Light(vec3(0.0, 10.0, 15.0), vec3(0.2, 0.7, 0.2));
+    case 3:
+      return Light(vec3(-15.0, 10.0, 0.0), vec3(0.2, 0.2, 0.7));
+  }
+}
+
 vec3 render(in vec3 camera, in vec3 ray_dir)
 {
   float hit_t;
@@ -493,37 +534,34 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
     return vec3(0.0);
   }
 
-  Light light;
-  if (g_active_light == 0) {
-    light = Light(vec3(0.0, 10.0, -15.0), vec3(0.7));
-  } else if (g_active_light == 1) {
-    light = Light(vec3(15.0, 10.0, 0.0), vec3(0.7, 0.2, 0.2));
-  } else if (g_active_light == 2) {
-    light = Light(vec3(0.0, 10.0, 15.0), vec3(0.2, 0.7, 0.2));
-  } else if (g_active_light == 3) {
-    light = Light(vec3(-15.0, 10.0, 0.0), vec3(0.2, 0.2, 0.7));
-  }
-
+  Light light = get_active_light();
   vec3 p = camera + hit_t * ray_dir;
   vec3 n = (mat == MATERIAL_WATER) ? water_normal(p.xz) : calc_normal(p);
   vec3 color = render_color(p, n, mat, camera, light);
 
-  if (mat == MATERIAL_WATER) {
-    vec3 line_of_sight = normalize(p - camera);
-    float fresnel = max(0.0, dot(-line_of_sight, n));
-    color = 0.2 * color +
-      0.7 * refraction(p, n, camera, light, 1.0 / 1.33) +
-      0.1 * fresnel * reflection(p, n, camera, light);
-  } else if (mat == MATERIAL_LIGHT1 || mat == MATERIAL_LIGHT2 ||
-             mat == MATERIAL_LIGHT3 || mat == MATERIAL_LIGHT4) {
-    if (!(mat == MATERIAL_LIGHT1 && g_active_light == 0 ||
-          mat == MATERIAL_LIGHT2 && g_active_light == 1 ||
-          mat == MATERIAL_LIGHT3 && g_active_light == 2 ||
-          mat == MATERIAL_LIGHT4 && g_active_light == 3)) {
-      color = 0.8 * color +
-        0.1 * refraction(p, n, camera, light, 1.0 / 1.52) +
-        0.1 * reflection(p, n, camera, light, true);
+  // Handle reflection/refraction.
+  switch (mat) {
+    case MATERIAL_WATER: {
+      vec3 line_of_sight = normalize(p - camera);
+      float fresnel = max(0.0, dot(-line_of_sight, n));
+      color = 0.2 * color +
+        0.7 * refraction(p, n, camera, light, 1.0 / 1.33) +
+        0.1 * fresnel * reflection(p, n, camera, light);
+      break;
     }
+    case MATERIAL_LIGHT1:
+    case MATERIAL_LIGHT2:
+    case MATERIAL_LIGHT3:
+    case MATERIAL_LIGHT4:
+      if (!(mat == MATERIAL_LIGHT1 && g_active_light == 0 ||
+            mat == MATERIAL_LIGHT2 && g_active_light == 1 ||
+            mat == MATERIAL_LIGHT3 && g_active_light == 2 ||
+            mat == MATERIAL_LIGHT4 && g_active_light == 3)) {
+        color = 0.8 * color +
+          0.1 * refraction(p, n, camera, light, 1.0 / 1.52) +
+          0.1 * reflection(p, n, camera, light, true);
+      }
+      break;
   }
 
   return color;
@@ -537,8 +575,11 @@ void main()
   uv = 2.0 * uv - 1.0;
   uv.x *= u_resolution.x / u_resolution.y;
 
-  // vec3 camera = vec3(0.0, 5.5, 15.0);
+#if CAMERA_MOVEMENT
   vec3 camera = vec3(15.0 * cos(0.3 * u_time), 5.5, 15.0 * sin(0.3 * u_time));
+#else
+  vec3 camera = vec3(0.0, 5.5, 15.0);
+#endif
   vec3 look_at = vec3(0.0, 0.0, 0.0);
 
   vec3 back = normalize(camera - look_at);
