@@ -1,9 +1,10 @@
 
-// For bitwise operations.
 #extension GL_EXT_gpu_shader4 : enable
 
 uniform float u_time;
 uniform vec2 u_resolution;
+
+#define LOW_QUALITY 0
 
 /* ---------------------------- General Utilities --------------------------- */
 
@@ -264,19 +265,54 @@ vec3 water_normal(in vec2 p)
 
 /* -------------------------------- Textures -------------------------------- */
 
-// XXX: texture sampling?
-// XXX: only do sampling on small resolutions?
-
 vec3 tile_texture(in vec2 uv)
 {
   vec2 q = round(uv);
   return vec3(mix(smoothstep(0.0, 0.07, abs(uv.x - q.x)), smoothstep(0.0, 0.07, abs(uv.y - q.y)), 0.5));
 }
 
+vec3 tile_texture_sampled(in vec2 uv, in vec2 duvdx, in vec2 duvdy)
+{
+  const int max_samples = 10;
+
+  int x_steps = 1 + int(clamp(10.0 * length(duvdx), 0.0, float(max_samples - 1)));
+  int y_steps = 1 + int(clamp(10.0 * length(duvdy), 0.0, float(max_samples - 1)));
+
+  vec3 total = vec3(0.0);
+
+  for (int i = 0; i < x_steps; i++) {
+    for (int j = 0; j < y_steps; j++) {
+      vec2 st = vec2(i, j) / vec2(x_steps, y_steps);
+      total += tile_texture(uv + st.x * duvdx + st.y * duvdy);
+    }
+  }
+
+  return total / (float(x_steps) * float(y_steps));
+}
+
 vec3 checker_texture(in vec2 uv)
 {
   vec2 q = round(uv);
   return vec3(smoothstep(0.0, 0.03, abs(uv.x - q.x) - abs(uv.y - q.y)));
+}
+
+vec3 checker_texture_sampled(in vec2 uv, in vec2 duvdx, in vec2 duvdy)
+{
+  const int max_samples = 10;
+
+  int x_steps = 1 + int(clamp(10.0 * length(duvdx), 0.0, float(max_samples - 1)));
+  int y_steps = 1 + int(clamp(10.0 * length(duvdy), 0.0, float(max_samples - 1)));
+
+  vec3 total = vec3(0.0);
+
+  for (int i = 0; i < x_steps; i++) {
+    for (int j = 0; j < y_steps; j++) {
+      vec2 st = vec2(i, j) / vec2(x_steps, y_steps);
+      total += checker_texture(uv + st.x * duvdx + st.y * duvdy);
+    }
+  }
+
+  return total / (float(x_steps) * float(y_steps));
 }
 
 /* ---------------------------------- SDFs ---------------------------------- */
@@ -415,10 +451,21 @@ vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera, in Light lig
     const Material mat = Material(vec3(1.0, 0.0, 0.0), 0.3, 0.6, 1.0, 60.0);
     color = calc_color(p, n, camera, light, mat);
   } else if (mat == MATERIAL_GROUND) {
-    Material mat = Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 0.0);
+#if LOW_QUALITY
+    vec3 tex = checker_texture(p.xz);
+#else
+    vec3 tex = checker_texture_sampled(p.xz, dFdx(p.xz), dFdy(p.xz));
+#endif
+    Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
     color = calc_color(p, n, camera, light, mat);
   } else if (mat == MATERIAL_XY_WALL || mat == MATERIAL_ZY_WALL) {
-    Material mat = Material((mat == MATERIAL_XY_WALL) ? tile_texture(p.xy) : tile_texture(p.zy), 0.6, 1.0, 0.0, 0.0);
+#if LOW_QUALITY
+    vec3 tex = (mat == MATERIAL_XY_WALL) ? tile_texture(p.xy) : tile_texture(p.zy);
+#else
+    vec3 tex = (mat == MATERIAL_XY_WALL) ?
+      tile_texture_sampled(p.xy, dFdx(p.xy), dFdy(p.xy)) : tile_texture_sampled(p.zy, dFdx(p.zy), dFdy(p.zy));
+#endif
+    Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
     color = calc_color(p, n, camera, light, mat);
   } else if (mat == MATERIAL_LIGHT1 || mat == MATERIAL_LIGHT2 ||
              mat == MATERIAL_LIGHT3 || mat == MATERIAL_LIGHT4) {
