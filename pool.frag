@@ -557,9 +557,11 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
             mat == MATERIAL_LIGHT2 && g_active_light == 1 ||
             mat == MATERIAL_LIGHT3 && g_active_light == 2 ||
             mat == MATERIAL_LIGHT4 && g_active_light == 3)) {
+        vec3 line_of_sight = normalize(p - camera);
+        float fresnel = max(0.0, dot(-line_of_sight, n));
         color = 0.8 * color +
           0.1 * refraction(p, n, camera, light, 1.0 / 1.52) +
-          0.1 * reflection(p, n, camera, light, true);
+          0.1 * fresnel * reflection(p, n, camera, light, true);
       }
       break;
   }
