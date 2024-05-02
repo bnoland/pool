@@ -428,7 +428,7 @@ float sd_scene(in vec3 p, out int mat, in bool enable_water = true, in bool enab
   float room = sd_room(p, room_mat);
   dist = min(dist, room);
 
-  float ball = sd_sphere(p - vec3(0.0, 0.0, 0.0), 2.0);
+  float ball = sd_sphere(p - vec3(0.0, 0.1 * sin(2.0 * u_time), 0.0), 2.0);
   dist = min(dist, ball);
 
   float water = enable_water ? sd_water(p) : INFINITY;
