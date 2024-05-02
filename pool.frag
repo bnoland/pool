@@ -312,7 +312,7 @@ const int MATERIAL_LIGHT4 = 10;
 const float POOL_SIZE_X = 8.0;
 const float POOL_SIZE_Z = 8.0;
 
-int g_active_light = int(u_time) % 4;
+int g_active_light = int(0.5 * u_time) % 4;
 
 // XXX: Could use considerable cleanup.
 float sd_scene(in vec3 p, out int mat, in bool enable_water = true, in bool enable_active_light = true)
