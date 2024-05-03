@@ -1,8 +1,9 @@
-
-#extension GL_EXT_gpu_shader4 : enable
+#version 430
 
 uniform float u_time;
 uniform vec2 u_resolution;
+
+out vec4 frag_color;
 
 #define CAMERA_MOVEMENT 1
 
@@ -25,7 +26,7 @@ struct Material
   float shininess;
 };
 
-float sd_scene(in vec3 p, out int mat, in bool enable_water = true, in bool enable_active_light = true);
+float sd_scene(in vec3 p, out int mat, in bool enable_water, in bool enable_active_light);
 vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera, in Light light);
 
 float shadow(in vec3 p, in vec3 incident)
@@ -67,9 +68,9 @@ vec3 calc_normal(in vec3 p)
   const vec2 eps = vec2(0.001, 0.0);
   int mat;
   vec3 n = vec3(
-    sd_scene(p + eps.xyy, mat) - sd_scene(p - eps.xyy, mat),
-    sd_scene(p + eps.yxy, mat) - sd_scene(p - eps.yxy, mat),
-    sd_scene(p + eps.yyx, mat) - sd_scene(p - eps.yyx, mat)
+    sd_scene(p + eps.xyy, mat, true, true) - sd_scene(p - eps.xyy, mat, true, true),
+    sd_scene(p + eps.yxy, mat, true, true) - sd_scene(p - eps.yxy, mat, true, true),
+    sd_scene(p + eps.yyx, mat, true, true) - sd_scene(p - eps.yyx, mat, true, true)
   );
   return normalize(n);
 }
@@ -82,7 +83,7 @@ bool cast_ray(in vec3 origin, in vec3 dir, out float hit_t, out int mat)
 
   for (int i = 0; i < 256 && t <= max_t; i++) {
     vec3 p = origin + t * dir;
-    float dist = sd_scene(p, mat);
+    float dist = sd_scene(p, mat, true, true);
     if (dist < 0.001) {
       hit_t = t;
       return true;
@@ -93,7 +94,7 @@ bool cast_ray(in vec3 origin, in vec3 dir, out float hit_t, out int mat)
   return false;
 }
 
-vec3 reflection(in vec3 p, in vec3 n, in vec3 camera, in Light light, bool enable_water = false)
+vec3 reflection(in vec3 p, in vec3 n, in vec3 camera, in Light light, bool enable_water)
 {
   const float max_t = 50.0;
   const float min_t = 0.01;
@@ -105,7 +106,7 @@ vec3 reflection(in vec3 p, in vec3 n, in vec3 camera, in Light light, bool enabl
   for (int i = 0; i < 256 && t <= max_t; i++) {
     int mat;
     vec3 q = 0.002 * n + p + t * ray_dir;
-    float dist = sd_scene(q, mat, enable_water);
+    float dist = sd_scene(q, mat, enable_water, true);
     if (dist < 0.001) {
       return render_color(q, calc_normal(q), mat, camera, light);
     }
@@ -335,14 +336,13 @@ const int MATERIAL_NONE = 0;
 const int MATERIAL_WATER = 1;
 const int MATERIAL_POOL = 2;
 const int MATERIAL_BALL = 3;
-const int MATERIAL_GROUND = 4;
-const int MATERIAL_CEILING = 5;
-const int MATERIAL_XY_WALL = 6;
-const int MATERIAL_ZY_WALL = 7;
-const int MATERIAL_LIGHT1 = 8;
-const int MATERIAL_LIGHT2 = 9;
-const int MATERIAL_LIGHT3 = 10;
-const int MATERIAL_LIGHT4 = 11;
+const int MATERIAL_GROUND_CEILING = 4;
+const int MATERIAL_XY_WALL = 5;
+const int MATERIAL_ZY_WALL = 6;
+const int MATERIAL_LIGHT1 = 7;
+const int MATERIAL_LIGHT2 = 8;
+const int MATERIAL_LIGHT3 = 9;
+const int MATERIAL_LIGHT4 = 10;
 
 const float POOL_SIZE_X = 8.0;
 const float POOL_SIZE_Z = 8.0;
@@ -374,10 +374,8 @@ float sd_room(in vec3 p, out int mat)
 
   float dist = min(wall1, min(wall2, min(wall3, min(wall4, min(ground, ceiling)))));
 
-  if (dist == ground) {
-    mat = MATERIAL_GROUND;
-  } else if (dist == ceiling) {
-    mat = MATERIAL_CEILING;
+  if (dist == ground || dist == ceiling) {
+    mat = MATERIAL_GROUND_CEILING;
   } else if (dist == wall1 || dist == wall2) {
     mat = MATERIAL_XY_WALL;
   } else if (dist == wall3 || dist == wall4) {
@@ -425,7 +423,7 @@ float sd_lights(in vec3 p, out int mat, in bool enable_active_light)
   return dist;
 }
 
-float sd_scene(in vec3 p, out int mat, in bool enable_water = true, in bool enable_active_light = true)
+float sd_scene(in vec3 p, out int mat, in bool enable_water, in bool enable_active_light)
 {
   float pool = sd_pool(p);
   float dist = pool;
@@ -477,16 +475,10 @@ vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera, in Light lig
       const Material mat = Material(vec3(1.0, 0.0, 0.0), 0.3, 0.6, 1.0, 60.0);
       return calc_color(p, n, camera, light, mat);
     }
-    case MATERIAL_GROUND: {
+    case MATERIAL_GROUND_CEILING: {
       vec3 tex = checker_texture_sampled(p.xz, dFdx(p.xz), dFdy(p.xz));
       Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
       return calc_color(p, n, camera, light, mat);
-    }
-    case MATERIAL_CEILING: {
-      // XXX: wtf??
-      // vec3 tex = checker_texture_sampled(p.xz, dFdx(p.xz), dFdy(p.xz));
-      // Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
-      // return calc_color(p, n, camera, light, mat);
     }
     case MATERIAL_XY_WALL: {
       vec3 tex = tile_texture_sampled(p.xy, dFdx(p.xy), dFdy(p.xy));
@@ -551,13 +543,6 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
   vec3 n = (mat == MATERIAL_WATER) ? water_normal(p.xz) : calc_normal(p);
   vec3 color = render_color(p, n, mat, camera, light);
 
-  // XXX: what in the hell is going on here?
-  if (mat == MATERIAL_CEILING) {
-    vec3 tex = tile_texture_sampled(p.xz, dFdx(p.xz), dFdy(p.xz));
-    Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
-    return calc_color(p, n, camera, light, mat);
-  }
-
   // Handle reflection/refraction.
   switch (mat) {
     case MATERIAL_WATER: {
@@ -565,7 +550,7 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
       float fresnel = max(0.0, dot(-line_of_sight, n));
       color = 0.2 * color +
         0.7 * refraction(p, n, camera, light, 1.0 / 1.33) +
-        0.1 * fresnel * reflection(p, n, camera, light);
+        0.1 * fresnel * reflection(p, n, camera, light, false);
       break;
     }
     case MATERIAL_LIGHT1:
@@ -610,5 +595,5 @@ void main()
   vec3 ray_dir = normalize(uv.x * right + uv.y * up + 1.0 * (-back));
   vec3 color = render(camera, ray_dir);
   
-  gl_FragColor = vec4(color, 1.0);
+  frag_color = vec4(color, 1.0);
 }
