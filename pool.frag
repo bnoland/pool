@@ -336,12 +336,13 @@ const int MATERIAL_WATER = 1;
 const int MATERIAL_POOL = 2;
 const int MATERIAL_BALL = 3;
 const int MATERIAL_GROUND = 4;
-const int MATERIAL_XY_WALL = 5;
-const int MATERIAL_ZY_WALL = 6;
-const int MATERIAL_LIGHT1 = 7;
-const int MATERIAL_LIGHT2 = 8;
-const int MATERIAL_LIGHT3 = 9;
-const int MATERIAL_LIGHT4 = 10;
+const int MATERIAL_CEILING = 5;
+const int MATERIAL_XY_WALL = 6;
+const int MATERIAL_ZY_WALL = 7;
+const int MATERIAL_LIGHT1 = 8;
+const int MATERIAL_LIGHT2 = 9;
+const int MATERIAL_LIGHT3 = 10;
+const int MATERIAL_LIGHT4 = 11;
 
 const float POOL_SIZE_X = 8.0;
 const float POOL_SIZE_Z = 8.0;
@@ -355,8 +356,10 @@ float sd_pool(in vec3 p)
   float edge3 = sd_box(p - vec3(0.0, -1.2, -POOL_SIZE_Z), vec3(POOL_SIZE_X + 0.3, 1.8, 0.3));
   float edge4 = sd_box(p - vec3(0.0, -1.2, POOL_SIZE_Z), vec3(POOL_SIZE_X + 0.3, 1.8, 0.3));
   float bottom = sd_box(p - vec3(0.0, -3.0, 0.0), vec3(POOL_SIZE_X, 0.1, POOL_SIZE_Z));
+
   float dist = min(edge1, min(edge2, min(edge3, min(edge4, bottom))));
   dist += 0.002 * noise(30.0 * p);  // Stipple
+
   return dist;
 }
 
@@ -367,11 +370,14 @@ float sd_room(in vec3 p, out int mat)
   float wall3 = sd_plane(p, vec3(1.0, 0.0, 0.0), 18.0);
   float wall4 = sd_plane(p, vec3(-1.0, 0.0, 0.0), 18.0);
   float ground = sd_plane(p, vec3(0.0, 1.0, 0.0), 3.0);
+  float ceiling = sd_plane(p, vec3(0.0, -1.0, 0.0), 20.0);
 
-  float dist = min(wall1, min(wall2, min(wall3, min(wall4, ground))));
+  float dist = min(wall1, min(wall2, min(wall3, min(wall4, min(ground, ceiling)))));
 
   if (dist == ground) {
     mat = MATERIAL_GROUND;
+  } else if (dist == ceiling) {
+    mat = MATERIAL_CEILING;
   } else if (dist == wall1 || dist == wall2) {
     mat = MATERIAL_XY_WALL;
   } else if (dist == wall3 || dist == wall4) {
@@ -476,6 +482,12 @@ vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera, in Light lig
       Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
       return calc_color(p, n, camera, light, mat);
     }
+    case MATERIAL_CEILING: {
+      // XXX: wtf??
+      // vec3 tex = checker_texture_sampled(p.xz, dFdx(p.xz), dFdy(p.xz));
+      // Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
+      // return calc_color(p, n, camera, light, mat);
+    }
     case MATERIAL_XY_WALL: {
       vec3 tex = tile_texture_sampled(p.xy, dFdx(p.xy), dFdy(p.xy));
       Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
@@ -538,6 +550,13 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
   vec3 p = camera + hit_t * ray_dir;
   vec3 n = (mat == MATERIAL_WATER) ? water_normal(p.xz) : calc_normal(p);
   vec3 color = render_color(p, n, mat, camera, light);
+
+  // XXX: what in the hell is going on here?
+  if (mat == MATERIAL_CEILING) {
+    vec3 tex = tile_texture_sampled(p.xz, dFdx(p.xz), dFdy(p.xz));
+    Material mat = Material(tex, 0.6, 1.0, 0.0, 0.0);
+    return calc_color(p, n, camera, light, mat);
+  }
 
   // Handle reflection/refraction.
   switch (mat) {
