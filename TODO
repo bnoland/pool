@@ -1,3 +1,4 @@
 * Adjust shadows in accordance with refraction.
 * In light reflections, could cheat and just show a bluish plane where the water is.
 * Weird issues on NVIDIA card. Is `render_color()` running up against a function size limit or something?
+* Compile time is sometimes kinda slow.
