@@ -595,7 +595,7 @@ void main()
   vec3 ray_dir = normalize(uv.x * right + uv.y * up + 1.0 * (-back));
   vec3 color = render(camera, ray_dir);
 
-  color = pow(color, vec3(0.5));  // Gamma correction
+  color = pow(color, vec3(0.4545));  // Gamma correction
 
   frag_color = vec4(color, 1.0);
 }
