@@ -5,6 +5,8 @@ uniform vec2 u_resolution;
 
 out vec4 frag_color;
 
+/* ----------------------- Constants / Types / Globals ---------------------- */
+
 #define CAMERA_MOVEMENT true
 
 struct DistMat
@@ -30,36 +32,17 @@ struct Material
 
 const int MATERIAL_NONE = 0;
 const int MATERIAL_POOL = 1;
+const int MATERIAL_GROUND = 2;
+const int MATERIAL_WALL_XY = 3;
+const int MATERIAL_WALL_ZY = 4;
+const int MATERIAL_CEILING = 5;
 
 const float POOL_SIZE_X = 8.0;
 const float POOL_SIZE_Z = 8.0;
 
-float sd_box(in vec3 p, in vec3 s)
-{
-  vec3 q = abs(p) - s;
-  return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
-}
+/* ---------------------------- General Utilities --------------------------- */
 
-float sd_pool(in vec3 p)
-{
-  float edge1 = sd_box(p - vec3(-POOL_SIZE_X, 1.8, 0.0), vec3(0.3, 1.8, POOL_SIZE_Z + 0.3));
-  float edge2 = sd_box(p - vec3(POOL_SIZE_X, 1.8, 0.0), vec3(0.3, 1.8, POOL_SIZE_Z + 0.3));
-  float edge3 = sd_box(p - vec3(0.0, 1.8, POOL_SIZE_Z), vec3(POOL_SIZE_X, 1.8, 0.3));
-  float edge4 = sd_box(p - vec3(0.0, 1.8, -POOL_SIZE_Z), vec3(POOL_SIZE_X, 1.8, 0.3));
-  float bottom = sd_box(p - vec3(0.0, 0.05, 0.0), vec3(POOL_SIZE_X, 0.1, POOL_SIZE_Z));
-
-  float dist = min(edge1, min(edge2, min(edge3, min(edge4, bottom))));
-  dist -= 0.1;  // Smooth edges
-  // dist += 0.002 * noise(30.0 * p);  // Stipple
-
-  return dist;
-}
-
-DistMat sd_scene(in vec3 p)
-{
-  float pool = sd_pool(p);
-  return DistMat(pool, MATERIAL_POOL);
-}
+DistMat sd_scene(in vec3 p);
 
 DistMat cast_ray(in vec3 ray_origin, in vec3 ray_dir)
 {
@@ -107,18 +90,116 @@ vec3 calc_color(in vec3 p, in vec3 n, in vec3 camera, in Light light, in Materia
   return intensity * light.color * mat.color;
 }
 
+/* ---------------------------------- Scene --------------------------------- */
+
+float sd_box(in vec3 p, in vec3 s)
+{
+  vec3 q = abs(p) - s;
+  return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float sd_pool(in vec3 p)
+{
+  float edge1 = sd_box(p - vec3(-POOL_SIZE_X, 1.8, 0.0), vec3(0.3, 1.8, POOL_SIZE_Z + 0.3));
+  float edge2 = sd_box(p - vec3(POOL_SIZE_X, 1.8, 0.0), vec3(0.3, 1.8, POOL_SIZE_Z + 0.3));
+  float edge3 = sd_box(p - vec3(0.0, 1.8, POOL_SIZE_Z), vec3(POOL_SIZE_X, 1.8, 0.3));
+  float edge4 = sd_box(p - vec3(0.0, 1.8, -POOL_SIZE_Z), vec3(POOL_SIZE_X, 1.8, 0.3));
+  float bottom = sd_box(p - vec3(0.0, 0.05, 0.0), vec3(POOL_SIZE_X, 0.1, POOL_SIZE_Z));
+
+  float dist = min(edge1, min(edge2, min(edge3, min(edge4, bottom))));
+  dist -= 0.1;  // Smooth edges
+  // dist += 0.002 * noise(30.0 * p);  // Stipple
+
+  return dist;
+}
+
+DistMat sd_room(in vec3 p)
+{
+  float ground = p.y;
+  float ceiling = 18.0 - p.y;
+  float wall1 = p.x + 18.0;
+  float wall2 = 18.0 - p.x;
+  float wall3 = p.z + 18.0;
+  float wall4 = 18.0 - p.z;
+  float dist = min(ground, min(ceiling, min(wall1, min(wall2, min(wall3, wall4)))));
+
+  int mat = MATERIAL_NONE;
+  if (dist == ground) {
+    mat = MATERIAL_GROUND;
+  } else if (dist == ceiling) {
+    mat = MATERIAL_CEILING;
+  } else if (dist == wall1 || dist == wall2) {
+    mat = MATERIAL_WALL_ZY;
+  } else if (dist == wall3 || dist == wall4) {
+    mat = MATERIAL_WALL_XY;
+  }
+
+  return DistMat(dist, mat);
+}
+
+DistMat sd_scene(in vec3 p)
+{
+  float pool = sd_pool(p);
+  DistMat room = sd_room(p);
+  float dist = min(pool, room.dist);
+
+  int mat = MATERIAL_NONE;
+  if (dist == pool) {
+    mat = MATERIAL_POOL;
+  } else if (dist == room.dist) {
+    mat = room.mat;
+  }
+
+  return DistMat(dist, mat);
+}
+
+/* -------------------------------- Textures -------------------------------- */
+
+// XXX: Sampled textures?
+
+vec3 tile_texture(in vec2 uv)
+{
+  vec2 q = round(uv);
+  return vec3(mix(smoothstep(0.0, 0.07, abs(uv.x - q.x)), smoothstep(0.0, 0.07, abs(uv.y - q.y)), 0.5));
+}
+
+vec3 checker_texture(in vec2 uv)
+{
+  vec2 q = round(uv);
+  return vec3(smoothstep(0.0, 0.03, abs(uv.x - q.x) - abs(uv.y - q.y)));
+}
+
+/* -------------------------------- Rendering ------------------------------- */
+
 vec3 render(in vec3 camera, in vec3 ray_dir)
 {
   DistMat scene = cast_ray(camera, ray_dir);
-  if (scene.mat == MATERIAL_POOL) {
-    const Light light = Light(vec3(0.0, 10.0, 0.0), vec3(1.0));
-    const Material mat = Material(vec3(0.8), 0.6, 1.0, 0.0, 0.0);
-    vec3 p = camera + scene.dist * ray_dir;
-    vec3 n = calc_normal(p);
-    return calc_color(p, n, camera, light, mat);
+  if (scene.mat == MATERIAL_NONE) {
+    return vec3(0.0);
   }
-  return vec3(0.0);
+
+  const Light light = Light(vec3(0.0, 10.0, 0.0), vec3(1.0));
+  vec3 p = camera + scene.dist * ray_dir;
+  vec3 n = calc_normal(p);
+
+  Material mat;
+  // XXX: Replace with lookup table?
+  if (scene.mat == MATERIAL_POOL) {
+    mat = Material(vec3(0.8), 0.6, 1.0, 0.0, 0.0);
+  } else if (scene.mat == MATERIAL_GROUND) {
+    mat = Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 0.0);
+  } else if (scene.mat == MATERIAL_CEILING) {
+    mat = Material(tile_texture(p.xz), 0.6, 1.0, 0.0, 0.0);
+  } else if (scene.mat == MATERIAL_WALL_XY) {
+    mat = Material(tile_texture(p.xy), 0.6, 1.0, 0.0, 0.0);
+  } else if (scene.mat == MATERIAL_WALL_ZY) {
+    mat = Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 0.0);
+  }
+
+  return calc_color(p, n, camera, light, mat);
 }
+
+/* ---------------------------------- Main ---------------------------------- */
 
 void main()
 {
