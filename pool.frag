@@ -423,7 +423,7 @@ vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera)
 {
   Light light = g_lights[g_active_light];
   Material m;
-  
+
   switch (mat) {
     case MATERIAL_POOL:
       m = Material(vec3(0.8), 0.6, 1.0, 0.0, 1.0);
@@ -474,7 +474,7 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
   Light light = g_lights[g_active_light];
   vec3 p = camera + scene.dist * ray_dir;
   vec3 n = calc_normal(p);
-  vec3 color = render_color(p, n, scene.mat, camera, light);
+  vec3 color = render_color(p, n, scene.mat, camera);
 
   if (scene.mat == MATERIAL_WATER) {
     PointMat refl = water_reflection(p, n, camera, light);
