@@ -7,7 +7,7 @@ out vec4 frag_color;
 
 /* ----------------------- Constants / Types / Globals ---------------------- */
 
-#define CAMERA_MOVEMENT false
+#define CAMERA_MOVEMENT true
 
 struct DistMat
 {
@@ -30,6 +30,8 @@ struct Material
   float shininess;
 };
 
+const float INFINITY = 1.0 / 0.0;
+
 const int MATERIAL_NONE = 0;
 const int MATERIAL_POOL = 1;
 const int MATERIAL_GROUND = 2;
@@ -40,6 +42,7 @@ const int MATERIAL_LIGHT1 = 6;
 const int MATERIAL_LIGHT2 = 7;
 const int MATERIAL_LIGHT3 = 8;
 const int MATERIAL_LIGHT4 = 9;
+const int MATERIAL_WATER = 10;
 
 const float POOL_SIZE_X = 8.0;
 const float POOL_SIZE_Z = 8.0;
@@ -80,6 +83,7 @@ vec3 calc_normal(in vec3 p)
   return normalize(n);
 }
 
+// XXX: Include shadows due to water?
 float shadow(in vec3 p, in vec3 light_dir)
 {
   const float min_t = 0.1;
@@ -121,6 +125,128 @@ vec3 calc_color(in vec3 p, in vec3 n, in vec3 camera, in Light light, in Materia
   return intensity * light.color * mat.color;
 }
 
+/* ---------------------------------- Noise --------------------------------- */
+
+float hash(in vec3 p)
+{
+  int n = int(p.x * 3.0 + p.y * 113.0 + p.z * 311.0);
+  n = (n << 13) ^ n;
+  n = n * (n * n * 15731 + 789221) + 1376312589;
+  return -1.0 + 2.0 * float(n & 0x0fffffff) / float(0x0fffffff);
+}
+
+float noise(in vec3 p)
+{
+  vec3 m = floor(p);
+  vec3 q = fract(p);
+
+  vec3 u = q * q * (3.0 - 2.0 * q);
+  vec3 du = 6.0 * q * (1.0 - q);
+
+  // XXX: Prevent inlining?
+  float a = hash(m + vec3(0, 0, 0));
+  float b = hash(m + vec3(1, 0, 0));
+  float c = hash(m + vec3(0, 1, 0));
+  float d = hash(m + vec3(1, 1, 0));
+  float e = hash(m + vec3(0, 0, 1));
+  float f = hash(m + vec3(1, 0, 1));
+  float g = hash(m + vec3(0, 1, 1));
+  float h = hash(m + vec3(1, 1, 1));
+
+  float k0 = a;
+  float k1 = b - a;
+  float k2 = c - a;
+  float k3 = e - a;
+  float k4 = a - b - c + d;
+  float k5 = a - c - e + g;
+  float k6 = a - b - e + f;
+  float k7 = -a + b + c - d + e - f - g + h;
+
+  float value = -1.0 + 2.0 *
+    (k0 + k1 * u.x + k2 * u.y + k3 * u.z + k4 * u.x * u.y +
+      k5 * u.y * u.z + k6 * u.z * u.x + k7 * u.x * u.y * u.z);
+
+  return value;
+}
+
+vec4 noise_d(in vec3 p)
+{
+  vec3 m = floor(p);
+  vec3 q = fract(p);
+
+  vec3 u = q * q * (3.0 - 2.0 * q);
+  vec3 du = 6.0 * q * (1.0 - q);
+
+  // XXX: Prevent inlining?
+  float a = hash(m + vec3(0, 0, 0));
+  float b = hash(m + vec3(1, 0, 0));
+  float c = hash(m + vec3(0, 1, 0));
+  float d = hash(m + vec3(1, 1, 0));
+  float e = hash(m + vec3(0, 0, 1));
+  float f = hash(m + vec3(1, 0, 1));
+  float g = hash(m + vec3(0, 1, 1));
+  float h = hash(m + vec3(1, 1, 1));
+
+  float k0 = a;
+  float k1 = b - a;
+  float k2 = c - a;
+  float k3 = e - a;
+  float k4 = a - b - c + d;
+  float k5 = a - c - e + g;
+  float k6 = a - b - e + f;
+  float k7 = -a + b + c - d + e - f - g + h;
+
+  float value = -1.0 + 2.0 *
+    (k0 + k1 * u.x + k2 * u.y + k3 * u.z + k4 * u.x * u.y +
+      k5 * u.y * u.z + k6 * u.z * u.x + k7 * u.x * u.y * u.z);
+
+  vec3 grad = 2.0 * du *
+    vec3(
+      k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z,
+      k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x,
+      k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y);
+
+  return vec4(value, grad);
+}
+
+/* ---------------------------------- Water --------------------------------- */
+
+float water_height(in vec2 p)
+{
+  float value = 0.0;
+  float freq = 1.0;
+  float amp = 1.0;
+
+  for (int i = 0; i < 3; i++) {
+    value += amp * noise(vec3(freq * p + 0.8 * u_time, 0.8 * u_time));
+    freq *= 2.0;
+    amp /= 2.0;
+  }
+
+  return value / 20.0;
+}
+
+vec3 water_reflection(in vec3 p, in vec3 n, in vec3 camera, in Light light)
+{
+  const float max_t = 50.0;
+  const float min_t = 0.01;
+  float t = min_t;
+
+  vec3 light_dir = normalize(light.pos - p);
+  vec3 ray_dir = reflect(-light_dir, n);
+
+  for (int i = 0; i < 256 && t <= max_t; i++) {
+    vec3 q = 0.002 * n + p + t * ray_dir;
+    DistMat scene = sd_scene(q);
+    if (scene.dist < 0.001) {
+      // return render_color(q, calc_normal(q), mat, camera, light);
+    }
+    t += scene.dist;
+  }
+
+  return vec3(0.0);
+}
+
 /* ---------------------------------- Scene --------------------------------- */
 
 float sd_box(in vec3 p, in vec3 s)
@@ -144,7 +270,7 @@ float sd_pool(in vec3 p)
 
   float dist = min(edge1, min(edge2, min(edge3, min(edge4, bottom))));
   dist -= 0.1;  // Smooth edges
-  // dist += 0.002 * noise(30.0 * p);  // Stipple
+  dist += 0.003 * noise(30.0 * p);  // Stipple
 
   return dist;
 }
@@ -195,12 +321,18 @@ DistMat sd_lights(in vec3 p)
   return DistMat(dist, mat);
 }
 
+float sd_water(in vec3 p)
+{
+  return (abs(p.x) <= POOL_SIZE_X && abs(p.z) <= POOL_SIZE_Z) ? p.y - water_height(p.xz) : INFINITY;
+}
+
 DistMat sd_scene(in vec3 p)
 {
   float pool = sd_pool(p);
   DistMat room = sd_room(p);
   DistMat lights = sd_lights(p);
-  float dist = min(pool, min(room.dist, lights.dist));
+  float water = sd_water(p - vec3(0.0, 3.0, 0.0));
+  float dist = min(pool, min(room.dist, min(lights.dist, water)));
 
   int mat = MATERIAL_NONE;
   if (dist == pool) {
@@ -209,6 +341,8 @@ DistMat sd_scene(in vec3 p)
     mat = room.mat;
   } else if (dist == lights.dist) {
     mat = lights.mat;
+  } else if (dist == water) {
+    mat = MATERIAL_WATER;
   }
 
   return DistMat(dist, mat);
@@ -281,6 +415,9 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
     case MATERIAL_LIGHT4:
       if (g_active_light == 3) return lights[g_active_light].color + 0.3;
       mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      break;
+    case MATERIAL_WATER:
+      mat = Material(vec3(0.0, 0.25, 0.49), 0.6, 1.0, 1.0, 30.0);
       break;
   }
 
