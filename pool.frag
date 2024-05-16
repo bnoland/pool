@@ -15,6 +15,12 @@ struct DistMat
   int mat;
 };
 
+struct PointMat
+{
+  vec3 p;
+  int mat;
+};
+
 struct Light
 {
   vec3 pos;
@@ -83,7 +89,8 @@ vec3 calc_normal(in vec3 p)
   return normalize(n);
 }
 
-// XXX: Include shadows due to water?
+DistMat sd_scene_no_water(in vec3 p);
+
 float shadow(in vec3 p, in vec3 light_dir)
 {
   const float min_t = 0.1;
@@ -92,7 +99,7 @@ float shadow(in vec3 p, in vec3 light_dir)
   float result = 1.0;
 
   for (int i = 0; i < 256 && t <= max_t; i++) {
-    DistMat scene = sd_scene(p + t * light_dir);
+    DistMat scene = sd_scene_no_water(p + t * light_dir);
 
     // Ignore shadows in the vicinity of the active light.
     if (g_active_light == 0 && scene.mat == MATERIAL_LIGHT1) return 1.0;
@@ -226,25 +233,51 @@ float water_height(in vec2 p)
   return value / 20.0;
 }
 
-vec3 water_reflection(in vec3 p, in vec3 n, in vec3 camera, in Light light)
+PointMat water_reflection(in vec3 p, in vec3 n, in vec3 camera, in Light light)
 {
   const float max_t = 50.0;
   const float min_t = 0.01;
   float t = min_t;
+  vec3 q = p;
 
   vec3 light_dir = normalize(light.pos - p);
   vec3 ray_dir = reflect(-light_dir, n);
 
   for (int i = 0; i < 256 && t <= max_t; i++) {
-    vec3 q = 0.002 * n + p + t * ray_dir;
-    DistMat scene = sd_scene(q);
+    q = 0.002 * n + p + t * ray_dir;
+    DistMat scene = sd_scene_no_water(q);
     if (scene.dist < 0.001) {
-      // return render_color(q, calc_normal(q), mat, camera, light);
+      return PointMat(q, scene.mat);
     }
     t += scene.dist;
   }
 
-  return vec3(0.0);
+  return PointMat(q, MATERIAL_NONE);
+}
+
+float sd_pool(in vec3 p);
+
+PointMat water_refraction(in vec3 p, in vec3 n, in vec3 camera, in Light light)
+{
+  const float max_t = 10.0;
+  const float min_t = 0.01;
+  float t = min_t;
+  vec3 q = p;
+
+  vec3 view_dir = normalize(camera - p);
+  vec3 ray_dir = refract(-view_dir, n, 1.0 / 1.33);
+
+  for (int i = 0; i < 256 && t <= max_t; i++) {
+    q = -0.002 * n + p + t * ray_dir;
+    float dist = sd_pool(q);
+    if (dist < 0.001) {
+      // XXX: Include ball as well.
+      return PointMat(q, MATERIAL_POOL);
+    }
+    t += dist;
+  }
+
+  return PointMat(q, MATERIAL_NONE);
 }
 
 /* ---------------------------------- Scene --------------------------------- */
@@ -326,13 +359,12 @@ float sd_water(in vec3 p)
   return (abs(p.x) <= POOL_SIZE_X && abs(p.z) <= POOL_SIZE_Z) ? p.y - water_height(p.xz) : INFINITY;
 }
 
-DistMat sd_scene(in vec3 p)
+DistMat sd_scene_no_water(in vec3 p)
 {
   float pool = sd_pool(p);
   DistMat room = sd_room(p);
   DistMat lights = sd_lights(p);
-  float water = sd_water(p - vec3(0.0, 3.0, 0.0));
-  float dist = min(pool, min(room.dist, min(lights.dist, water)));
+  float dist = min(pool, min(room.dist, lights.dist));
 
   int mat = MATERIAL_NONE;
   if (dist == pool) {
@@ -341,6 +373,20 @@ DistMat sd_scene(in vec3 p)
     mat = room.mat;
   } else if (dist == lights.dist) {
     mat = lights.mat;
+  }
+
+  return DistMat(dist, mat);
+}
+
+DistMat sd_scene(in vec3 p)
+{
+  DistMat scene = sd_scene_no_water(p);
+  float water = sd_water(p - vec3(0.0, 3.0, 0.0));
+  float dist = min(scene.dist, water);
+
+  int mat = MATERIAL_NONE;
+  if (dist == scene.dist) {
+    mat = scene.mat;
   } else if (dist == water) {
     mat = MATERIAL_WATER;
   }
@@ -366,6 +412,49 @@ vec3 checker_texture(in vec2 uv)
 
 /* -------------------------------- Rendering ------------------------------- */
 
+vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera, in Light light)
+{
+  Material m;
+  switch (mat) {
+    case MATERIAL_POOL:
+      m = Material(vec3(0.8), 0.6, 1.0, 0.0, 1.0);
+      break;
+    case MATERIAL_GROUND:
+      m = Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
+      break;
+    case MATERIAL_CEILING:
+      m = Material(tile_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
+      break;
+    case MATERIAL_WALL_XY:
+      m = Material(tile_texture(p.xy), 0.6, 1.0, 0.0, 1.0);
+      break;
+    case MATERIAL_WALL_ZY:
+      m = Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 1.0);
+      break;
+    case MATERIAL_LIGHT1:
+      if (g_active_light == 0) return light.color + 0.3;
+      m = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      break;
+    case MATERIAL_LIGHT2:
+      if (g_active_light == 1) return light.color + 0.3;
+      m = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      break;
+    case MATERIAL_LIGHT3:
+      if (g_active_light == 2) return light.color + 0.3;
+      m = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      break;
+    case MATERIAL_LIGHT4:
+      if (g_active_light == 3) return light.color + 0.3;
+      m = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      break;
+    case MATERIAL_WATER:
+      m = Material(vec3(0.0, 0.25, 0.49), 0.6, 1.0, 1.0, 30.0);
+      break;
+  }
+
+  return calc_color(p, n, camera, light, m);
+}
+
 vec3 render(in vec3 camera, in vec3 ray_dir)
 {
   DistMat scene = cast_ray(camera, ray_dir);
@@ -380,48 +469,22 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
     Light(vec3(-15.0, 10.0, 0.0), vec3(0.2, 0.2, 0.7))
   );
 
+  Light light = lights[g_active_light];
+
   vec3 p = camera + scene.dist * ray_dir;
   vec3 n = calc_normal(p);
+  vec3 color = render_color(p, n, scene.mat, camera, light);
 
-  Material mat;
-  switch (scene.mat) {
-    case MATERIAL_POOL:
-      mat = Material(vec3(0.8), 0.6, 1.0, 0.0, 1.0);
-      break;
-    case MATERIAL_GROUND:
-      mat = Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
-      break;
-    case MATERIAL_CEILING:
-      mat = Material(tile_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
-      break;
-    case MATERIAL_WALL_XY:
-      mat = Material(tile_texture(p.xy), 0.6, 1.0, 0.0, 1.0);
-      break;
-    case MATERIAL_WALL_ZY:
-      mat = Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 1.0);
-      break;
-    case MATERIAL_LIGHT1:
-      if (g_active_light == 0) return lights[g_active_light].color + 0.3;
-      mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
-      break;
-    case MATERIAL_LIGHT2:
-      if (g_active_light == 1) return lights[g_active_light].color + 0.3;
-      mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
-      break;
-    case MATERIAL_LIGHT3:
-      if (g_active_light == 2) return lights[g_active_light].color + 0.3;
-      mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
-      break;
-    case MATERIAL_LIGHT4:
-      if (g_active_light == 3) return lights[g_active_light].color + 0.3;
-      mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
-      break;
-    case MATERIAL_WATER:
-      mat = Material(vec3(0.0, 0.25, 0.49), 0.6, 1.0, 1.0, 30.0);
-      break;
+  if (scene.mat == MATERIAL_WATER) {
+    PointMat refl = water_reflection(p, n, camera, light);
+    PointMat refr = water_refraction(p, n, camera, light);
+    // XXX: Fresnel effect.
+    color = 0.2 * color +
+      0.7 * render_color(refr.p, calc_normal(refr.p), refr.mat, camera, light) +
+      0.1 * render_color(refl.p, calc_normal(refl.p), refl.mat, camera, light);
   }
 
-  return calc_color(p, n, camera, lights[g_active_light], mat);
+  return color;
 }
 
 /* ---------------------------------- Main ---------------------------------- */
