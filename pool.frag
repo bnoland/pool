@@ -7,7 +7,7 @@ out vec4 frag_color;
 
 /* ----------------------- Constants / Types / Globals ---------------------- */
 
-#define CAMERA_MOVEMENT true
+#define CAMERA_MOVEMENT false
 
 struct DistMat
 {
@@ -49,6 +49,7 @@ const int MATERIAL_LIGHT2 = 7;
 const int MATERIAL_LIGHT3 = 8;
 const int MATERIAL_LIGHT4 = 9;
 const int MATERIAL_WATER = 10;
+const int MATERIAL_BALL = 11;
 
 const float POOL_SIZE_X = 8.0;
 const float POOL_SIZE_Z = 8.0;
@@ -256,6 +257,7 @@ PointMat water_reflection(in vec3 p, in vec3 n, in vec3 camera, in Light light)
 }
 
 float sd_pool(in vec3 p);
+float sd_ball(in vec3 p);
 
 PointMat water_refraction(in vec3 p, in vec3 n, in vec3 camera, in Light light)
 {
@@ -269,10 +271,11 @@ PointMat water_refraction(in vec3 p, in vec3 n, in vec3 camera, in Light light)
 
   for (int i = 0; i < 256 && t <= max_t; i++) {
     q = -0.002 * n + p + t * ray_dir;
-    float dist = sd_pool(q);
+    float pool = sd_pool(q);
+    float ball = sd_ball(q);
+    float dist = min(pool, ball);
     if (dist < 0.001) {
-      // XXX: Include ball as well.
-      return PointMat(q, MATERIAL_POOL);
+      return PointMat(q, (dist == pool) ? MATERIAL_POOL : MATERIAL_BALL);
     }
     t += dist;
   }
@@ -356,7 +359,12 @@ DistMat sd_lights(in vec3 p)
 
 float sd_water(in vec3 p)
 {
-  return (abs(p.x) <= POOL_SIZE_X && abs(p.z) <= POOL_SIZE_Z) ? p.y - water_height(p.xz) : INFINITY;
+  return (abs(p.x) <= POOL_SIZE_X && abs(p.z) <= POOL_SIZE_Z) ? p.y - 3.0 - water_height(p.xz) : INFINITY;
+}
+
+float sd_ball(in vec3 p)
+{
+  return sd_sphere(p - vec3(0.0, 3.0 + 0.1 * sin(2.0 * u_time), 0.0), 2.0);
 }
 
 DistMat sd_scene_no_water(in vec3 p)
@@ -364,7 +372,8 @@ DistMat sd_scene_no_water(in vec3 p)
   float pool = sd_pool(p);
   DistMat room = sd_room(p);
   DistMat lights = sd_lights(p);
-  float dist = min(pool, min(room.dist, lights.dist));
+  float ball = sd_ball(p);
+  float dist = min(pool, min(room.dist, min(lights.dist, ball)));
 
   int mat = MATERIAL_NONE;
   if (dist == pool) {
@@ -373,6 +382,8 @@ DistMat sd_scene_no_water(in vec3 p)
     mat = room.mat;
   } else if (dist == lights.dist) {
     mat = lights.mat;
+  } else if (dist == ball) {
+    mat = MATERIAL_BALL;
   }
 
   return DistMat(dist, mat);
@@ -381,7 +392,7 @@ DistMat sd_scene_no_water(in vec3 p)
 DistMat sd_scene(in vec3 p)
 {
   DistMat scene = sd_scene_no_water(p);
-  float water = sd_water(p - vec3(0.0, 3.0, 0.0));
+  float water = sd_water(p);
   float dist = min(scene.dist, water);
 
   int mat = MATERIAL_NONE;
@@ -459,6 +470,9 @@ vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera)
     case MATERIAL_WATER:
       m = Material(vec3(0.0, 0.25, 0.49), 0.6, 1.0, 1.0, 30.0);
       break;
+    case MATERIAL_BALL:
+      m = Material(vec3(1.0, 0.0, 0.0), 0.3, 0.6, 1.0, 60.0);
+      break;
   }
 
   return calc_color(p, n, camera, light, m);
@@ -480,6 +494,7 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
     PointMat refl = water_reflection(p, n, camera, light);
     PointMat refr = water_refraction(p, n, camera, light);
     // XXX: Fresnel effect.
+    // XXX: Get rid of reflections?
     color = 0.2 * color +
       0.7 * render_color(refr.p, calc_normal(refr.p), refr.mat, camera) +
       0.1 * render_color(refl.p, calc_normal(refl.p), refl.mat, camera);
