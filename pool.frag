@@ -7,7 +7,7 @@ out vec4 frag_color;
 
 /* ----------------------- Constants / Types / Globals ---------------------- */
 
-#define CAMERA_MOVEMENT false
+#define CAMERA_MOVEMENT
 
 struct DistMat
 {
@@ -493,11 +493,12 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
   if (scene.mat == MATERIAL_WATER) {
     PointMat refl = water_reflection(p, n, camera, light);
     PointMat refr = water_refraction(p, n, camera, light);
-    // XXX: Fresnel effect.
+    vec3 view_dir = normalize(camera - p);
+    float fresnel = pow(clamp(1.0 - dot(view_dir, n), 0.0, 1.0), 5.0);
     // XXX: Get rid of reflections?
     color = 0.2 * color +
       0.7 * render_color(refr.p, calc_normal(refr.p), refr.mat, camera) +
-      0.1 * render_color(refl.p, calc_normal(refl.p), refl.mat, camera);
+      0.1 * fresnel * render_color(refl.p, calc_normal(refl.p), refl.mat, camera);
   }
 
   return color;
@@ -510,10 +511,11 @@ void main()
   vec2 uv = gl_FragCoord.xy / u_resolution;
   uv = 2.0 * uv - 1.0;
   uv.x *= u_resolution.x / u_resolution.y;
-
-  vec3 camera = CAMERA_MOVEMENT ?
-    vec3(15.0 * cos(0.3 * u_time), 5.5, 15.0 * sin(0.3 * u_time)) :
-    vec3(0.0, 5.5, 15.0);
+#ifdef CAMERA_MOVEMENT
+  vec3 camera = vec3(15.0 * cos(0.3 * u_time), 5.5, 15.0 * sin(0.3 * u_time));
+#else
+  vec3 camera = vec3(0.0, 5.5, 15.0);
+#endif
   vec3 look_at = vec3(0.0, 0.0, 0.0);
 
   vec3 back = normalize(camera - look_at);
