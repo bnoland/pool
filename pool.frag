@@ -7,7 +7,7 @@ out vec4 frag_color;
 
 /* ----------------------- Constants / Types / Globals ---------------------- */
 
-#define CAMERA_MOVEMENT true
+#define CAMERA_MOVEMENT false
 
 struct DistMat
 {
@@ -44,6 +44,8 @@ const int MATERIAL_LIGHT4 = 9;
 const float POOL_SIZE_X = 8.0;
 const float POOL_SIZE_Z = 8.0;
 
+int g_active_light = int(0.5 * u_time) % 4;
+
 /* ---------------------------- General Utilities --------------------------- */
 
 DistMat sd_scene(in vec3 p);
@@ -78,6 +80,31 @@ vec3 calc_normal(in vec3 p)
   return normalize(n);
 }
 
+float shadow(in vec3 p, in vec3 light_dir)
+{
+  const float min_t = 0.1;
+  const float max_t = 8.0;
+  float t = min_t;
+  float result = 1.0;
+
+  for (int i = 0; i < 256 && t <= max_t; i++) {
+    DistMat scene = sd_scene(p + t * light_dir);
+
+    // Ignore shadows in the vicinity of the active light.
+    if (g_active_light == 0 && scene.mat == MATERIAL_LIGHT1) return 1.0;
+    if (g_active_light == 1 && scene.mat == MATERIAL_LIGHT2) return 1.0;
+    if (g_active_light == 2 && scene.mat == MATERIAL_LIGHT3) return 1.0;
+    if (g_active_light == 3 && scene.mat == MATERIAL_LIGHT4) return 1.0;
+
+    result = min(result, 16.0 * scene.dist / t);
+    if (result < -1.0) break;
+    t += clamp(scene.dist, 0.01, 10.0);
+  }
+
+  result = max(result, -1.0);
+  return 0.25 * (1.0 + result) * (1.0 + result) * (2.0 - result);
+}
+
 vec3 calc_color(in vec3 p, in vec3 n, in vec3 camera, in Light light, in Material mat)
 {
   vec3 light_dir = normalize(light.pos - p);
@@ -89,7 +116,7 @@ vec3 calc_color(in vec3 p, in vec3 n, in vec3 camera, in Light light, in Materia
   float ambient = mat.ambient;
   float diffuse = mat.diffuse * diff_coeff;
   float specular = mat.specular * spec_coeff;
-  float intensity = ambient + diffuse + specular;
+  float intensity = (ambient + diffuse + specular) * shadow(p, light_dir);
 
   return intensity * light.color * mat.color;
 }
@@ -219,8 +246,6 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
     Light(vec3(-15.0, 10.0, 0.0), vec3(0.2, 0.2, 0.7))
   );
 
-  int light_idx = int(0.5 * u_time) % 4;
-
   vec3 p = camera + scene.dist * ray_dir;
   vec3 n = calc_normal(p);
 
@@ -242,24 +267,24 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
       mat = Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 1.0);
       break;
     case MATERIAL_LIGHT1:
-      if (light_idx == 0) return lights[light_idx].color + 0.3;
+      if (g_active_light == 0) return lights[g_active_light].color + 0.3;
       mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
       break;
     case MATERIAL_LIGHT2:
-      if (light_idx == 1) return lights[light_idx].color + 0.3;
+      if (g_active_light == 1) return lights[g_active_light].color + 0.3;
       mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
       break;
     case MATERIAL_LIGHT3:
-      if (light_idx == 2) return lights[light_idx].color + 0.3;
+      if (g_active_light == 2) return lights[g_active_light].color + 0.3;
       mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
       break;
     case MATERIAL_LIGHT4:
-      if (light_idx == 3) return lights[light_idx].color + 0.3;
+      if (g_active_light == 3) return lights[g_active_light].color + 0.3;
       mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
       break;
   }
 
-  return calc_color(p, n, camera, lights[light_idx], mat);
+  return calc_color(p, n, camera, lights[g_active_light], mat);
 }
 
 /* ---------------------------------- Main ---------------------------------- */
