@@ -412,9 +412,18 @@ vec3 checker_texture(in vec2 uv)
 
 /* -------------------------------- Rendering ------------------------------- */
 
-vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera, in Light light)
+const Light g_lights[] = Light[](
+  Light(vec3(0.0, 10.0, -15.0), vec3(0.7)),
+  Light(vec3(15.0, 10.0, 0.0), vec3(0.7, 0.2, 0.2)),
+  Light(vec3(0.0, 10.0, 15.0), vec3(0.2, 0.7, 0.2)),
+  Light(vec3(-15.0, 10.0, 0.0), vec3(0.2, 0.2, 0.7))
+);
+
+vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera)
 {
+  Light light = g_lights[g_active_light];
   Material m;
+  
   switch (mat) {
     case MATERIAL_POOL:
       m = Material(vec3(0.8), 0.6, 1.0, 0.0, 1.0);
@@ -462,15 +471,7 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
     return vec3(0.0);
   }
 
-  const Light lights[] = Light[](
-    Light(vec3(0.0, 10.0, -15.0), vec3(0.7)),
-    Light(vec3(15.0, 10.0, 0.0), vec3(0.7, 0.2, 0.2)),
-    Light(vec3(0.0, 10.0, 15.0), vec3(0.2, 0.7, 0.2)),
-    Light(vec3(-15.0, 10.0, 0.0), vec3(0.2, 0.2, 0.7))
-  );
-
-  Light light = lights[g_active_light];
-
+  Light light = g_lights[g_active_light];
   vec3 p = camera + scene.dist * ray_dir;
   vec3 n = calc_normal(p);
   vec3 color = render_color(p, n, scene.mat, camera, light);
@@ -480,8 +481,8 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
     PointMat refr = water_refraction(p, n, camera, light);
     // XXX: Fresnel effect.
     color = 0.2 * color +
-      0.7 * render_color(refr.p, calc_normal(refr.p), refr.mat, camera, light) +
-      0.1 * render_color(refl.p, calc_normal(refl.p), refl.mat, camera, light);
+      0.7 * render_color(refr.p, calc_normal(refr.p), refr.mat, camera) +
+      0.1 * render_color(refl.p, calc_normal(refl.p), refl.mat, camera);
   }
 
   return color;
