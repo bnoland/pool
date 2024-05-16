@@ -7,7 +7,7 @@ out vec4 frag_color;
 
 /* ----------------------- Constants / Types / Globals ---------------------- */
 
-#define CAMERA_MOVEMENT true
+#define CAMERA_MOVEMENT false
 
 struct DistMat
 {
@@ -36,6 +36,7 @@ const int MATERIAL_GROUND = 2;
 const int MATERIAL_WALL_XY = 3;
 const int MATERIAL_WALL_ZY = 4;
 const int MATERIAL_CEILING = 5;
+const int MATERIAL_LIGHTS = 6;
 
 const float POOL_SIZE_X = 8.0;
 const float POOL_SIZE_Z = 8.0;
@@ -76,11 +77,11 @@ vec3 calc_normal(in vec3 p)
 
 vec3 calc_color(in vec3 p, in vec3 n, in vec3 camera, in Light light, in Material mat)
 {
-  vec3 incident = normalize(p - light.pos);
-  vec3 line_of_sight = normalize(p - camera);
+  vec3 light_dir = normalize(light.pos - p);
+  vec3 view_dir = normalize(camera - p);
 
-  float diff_coeff = max(0.0, dot(-incident, n));
-  float spec_coeff = pow(max(0.0, dot(reflect(incident, n), -line_of_sight)), mat.shininess);
+  float diff_coeff = max(0.0, dot(light_dir, n));
+  float spec_coeff = pow(max(0.0, dot(reflect(-light_dir, n), view_dir)), mat.shininess);
 
   float ambient = mat.ambient;
   float diffuse = mat.diffuse * diff_coeff;
@@ -96,6 +97,11 @@ float sd_box(in vec3 p, in vec3 s)
 {
   vec3 q = abs(p) - s;
   return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float sd_sphere(in vec3 p, float r)
+{
+  return length(p) - r;
 }
 
 float sd_pool(in vec3 p)
@@ -137,17 +143,31 @@ DistMat sd_room(in vec3 p)
   return DistMat(dist, mat);
 }
 
+float sd_lights(in vec3 p)
+{
+  float light1 = sd_sphere(p - vec3(0.0, 10.0, -18.0), 1.8);
+  float light2 = sd_sphere(p - vec3(18.0, 10.0, 0.0), 1.8);
+  float light3 = sd_sphere(p - vec3(0.0, 10.0, 18.0), 1.8);
+  float light4 = sd_sphere(p - vec3(-18.0, 10.0, 0.0), 1.8);
+  float dist = min(light1, min(light2, min(light3, light4)));
+  // XXX: Return material info?
+  return dist;
+}
+
 DistMat sd_scene(in vec3 p)
 {
   float pool = sd_pool(p);
   DistMat room = sd_room(p);
-  float dist = min(pool, room.dist);
+  float lights = sd_lights(p);
+  float dist = min(pool, min(room.dist, lights));
 
   int mat = MATERIAL_NONE;
   if (dist == pool) {
     mat = MATERIAL_POOL;
   } else if (dist == room.dist) {
     mat = room.mat;
+  } else if (dist == lights) {
+    mat = MATERIAL_LIGHTS;
   }
 
   return DistMat(dist, mat);
@@ -182,21 +202,34 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
   vec3 p = camera + scene.dist * ray_dir;
   vec3 n = calc_normal(p);
 
+  // XXX: Lookup table or conditionals?
+#if 0
+  Material mats[] = Material[](
+    Material(vec3(0.8), 0.6, 1.0, 0.0, 0.0),             // MATERIAL_POOL
+    Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 0.0), // MATERIAL_GROUND
+    Material(tile_texture(p.xy), 0.6, 1.0, 0.0, 0.0),    // MATERIAL_WALL_XY
+    Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 0.0),    // MATERIAL_WALL_ZY
+    Material(tile_texture(p.xz), 0.6, 1.0, 0.0, 0.0),    // MATERIAL_CEILING
+    Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0)             // MATERIAL_LIGHTS
+  );
+  return calc_color(p, n, camera, light, mats[scene.mat - 1]);
+#else
   Material mat;
-  // XXX: Replace with lookup table?
   if (scene.mat == MATERIAL_POOL) {
-    mat = Material(vec3(0.8), 0.6, 1.0, 0.0, 0.0);
+    mat = Material(vec3(0.8), 0.6, 1.0, 0.0, 1.0);
   } else if (scene.mat == MATERIAL_GROUND) {
-    mat = Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 0.0);
+    mat = Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
   } else if (scene.mat == MATERIAL_CEILING) {
-    mat = Material(tile_texture(p.xz), 0.6, 1.0, 0.0, 0.0);
+    mat = Material(tile_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
   } else if (scene.mat == MATERIAL_WALL_XY) {
-    mat = Material(tile_texture(p.xy), 0.6, 1.0, 0.0, 0.0);
+    mat = Material(tile_texture(p.xy), 0.6, 1.0, 0.0, 1.0);
   } else if (scene.mat == MATERIAL_WALL_ZY) {
-    mat = Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 0.0);
+    mat = Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 1.0);
+  } else if (scene.mat == MATERIAL_LIGHTS) {
+    mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
   }
-
   return calc_color(p, n, camera, light, mat);
+#endif
 }
 
 /* ---------------------------------- Main ---------------------------------- */
