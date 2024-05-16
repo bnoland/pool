@@ -36,7 +36,10 @@ const int MATERIAL_GROUND = 2;
 const int MATERIAL_WALL_XY = 3;
 const int MATERIAL_WALL_ZY = 4;
 const int MATERIAL_CEILING = 5;
-const int MATERIAL_LIGHTS = 6;
+const int MATERIAL_LIGHT1 = 6;
+const int MATERIAL_LIGHT2 = 7;
+const int MATERIAL_LIGHT3 = 8;
+const int MATERIAL_LIGHT4 = 9;
 
 const float POOL_SIZE_X = 8.0;
 const float POOL_SIZE_Z = 8.0;
@@ -143,31 +146,42 @@ DistMat sd_room(in vec3 p)
   return DistMat(dist, mat);
 }
 
-float sd_lights(in vec3 p)
+DistMat sd_lights(in vec3 p)
 {
   float light1 = sd_sphere(p - vec3(0.0, 10.0, -18.0), 1.8);
   float light2 = sd_sphere(p - vec3(18.0, 10.0, 0.0), 1.8);
   float light3 = sd_sphere(p - vec3(0.0, 10.0, 18.0), 1.8);
   float light4 = sd_sphere(p - vec3(-18.0, 10.0, 0.0), 1.8);
   float dist = min(light1, min(light2, min(light3, light4)));
-  // XXX: Return material info?
-  return dist;
+  
+  int mat = MATERIAL_NONE;
+  if (dist == light1) {
+    mat = MATERIAL_LIGHT1;
+  } else if (dist == light2) {
+    mat = MATERIAL_LIGHT2;
+  } else if (dist == light3) {
+    mat = MATERIAL_LIGHT3;
+  } else if (dist == light4) {
+    mat = MATERIAL_LIGHT4;
+  }
+
+  return DistMat(dist, mat);
 }
 
 DistMat sd_scene(in vec3 p)
 {
   float pool = sd_pool(p);
   DistMat room = sd_room(p);
-  float lights = sd_lights(p);
-  float dist = min(pool, min(room.dist, lights));
+  DistMat lights = sd_lights(p);
+  float dist = min(pool, min(room.dist, lights.dist));
 
   int mat = MATERIAL_NONE;
   if (dist == pool) {
     mat = MATERIAL_POOL;
   } else if (dist == room.dist) {
     mat = room.mat;
-  } else if (dist == lights) {
-    mat = MATERIAL_LIGHTS;
+  } else if (dist == lights.dist) {
+    mat = lights.mat;
   }
 
   return DistMat(dist, mat);
@@ -198,26 +212,54 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
     return vec3(0.0);
   }
 
-  const Light light = Light(vec3(0.0, 10.0, 0.0), vec3(1.0));
+  const Light lights[] = Light[](
+    Light(vec3(0.0, 10.0, -15.0), vec3(0.7)),
+    Light(vec3(15.0, 10.0, 0.0), vec3(0.7, 0.2, 0.2)),
+    Light(vec3(0.0, 10.0, 15.0), vec3(0.2, 0.7, 0.2)),
+    Light(vec3(-15.0, 10.0, 0.0), vec3(0.2, 0.2, 0.7))
+  );
+
+  int light_idx = int(0.5 * u_time) % 4;
+
   vec3 p = camera + scene.dist * ray_dir;
   vec3 n = calc_normal(p);
 
   Material mat;
-  if (scene.mat == MATERIAL_POOL) {
-    mat = Material(vec3(0.8), 0.6, 1.0, 0.0, 1.0);
-  } else if (scene.mat == MATERIAL_GROUND) {
-    mat = Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
-  } else if (scene.mat == MATERIAL_CEILING) {
-    mat = Material(tile_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
-  } else if (scene.mat == MATERIAL_WALL_XY) {
-    mat = Material(tile_texture(p.xy), 0.6, 1.0, 0.0, 1.0);
-  } else if (scene.mat == MATERIAL_WALL_ZY) {
-    mat = Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 1.0);
-  } else if (scene.mat == MATERIAL_LIGHTS) {
-    mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+  switch (scene.mat) {
+    case MATERIAL_POOL:
+      mat = Material(vec3(0.8), 0.6, 1.0, 0.0, 1.0);
+      break;
+    case MATERIAL_GROUND:
+      mat = Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
+      break;
+    case MATERIAL_CEILING:
+      mat = Material(tile_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
+      break;
+    case MATERIAL_WALL_XY:
+      mat = Material(tile_texture(p.xy), 0.6, 1.0, 0.0, 1.0);
+      break;
+    case MATERIAL_WALL_ZY:
+      mat = Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 1.0);
+      break;
+    case MATERIAL_LIGHT1:
+      if (light_idx == 0) return lights[light_idx].color + 0.3;
+      mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      break;
+    case MATERIAL_LIGHT2:
+      if (light_idx == 1) return lights[light_idx].color + 0.3;
+      mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      break;
+    case MATERIAL_LIGHT3:
+      if (light_idx == 2) return lights[light_idx].color + 0.3;
+      mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      break;
+    case MATERIAL_LIGHT4:
+      if (light_idx == 3) return lights[light_idx].color + 0.3;
+      mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
+      break;
   }
-  
-  return calc_color(p, n, camera, light, mat);
+
+  return calc_color(p, n, camera, lights[light_idx], mat);
 }
 
 /* ---------------------------------- Main ---------------------------------- */
