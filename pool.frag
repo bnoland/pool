@@ -7,7 +7,7 @@ out vec4 frag_color;
 
 /* ----------------------- Constants / Types / Globals ---------------------- */
 
-#define CAMERA_MOVEMENT false
+#define CAMERA_MOVEMENT true
 
 struct DistMat
 {
@@ -202,18 +202,6 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
   vec3 p = camera + scene.dist * ray_dir;
   vec3 n = calc_normal(p);
 
-  // XXX: Lookup table or conditionals?
-#if 0
-  Material mats[] = Material[](
-    Material(vec3(0.8), 0.6, 1.0, 0.0, 0.0),             // MATERIAL_POOL
-    Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 0.0), // MATERIAL_GROUND
-    Material(tile_texture(p.xy), 0.6, 1.0, 0.0, 0.0),    // MATERIAL_WALL_XY
-    Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 0.0),    // MATERIAL_WALL_ZY
-    Material(tile_texture(p.xz), 0.6, 1.0, 0.0, 0.0),    // MATERIAL_CEILING
-    Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0)             // MATERIAL_LIGHTS
-  );
-  return calc_color(p, n, camera, light, mats[scene.mat - 1]);
-#else
   Material mat;
   if (scene.mat == MATERIAL_POOL) {
     mat = Material(vec3(0.8), 0.6, 1.0, 0.0, 1.0);
@@ -228,8 +216,8 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
   } else if (scene.mat == MATERIAL_LIGHTS) {
     mat = Material(vec3(1.0), 0.6, 1.0, 1.0, 30.0);
   }
+  
   return calc_color(p, n, camera, light, mat);
-#endif
 }
 
 /* ---------------------------------- Main ---------------------------------- */
