@@ -8,6 +8,7 @@ out vec4 frag_color;
 /* ----------------------- Constants / Types / Globals ---------------------- */
 
 #define CAMERA_MOVEMENT
+// #define REFLECT_ENTIRE_SCENE
 
 struct DistMat
 {
@@ -234,6 +235,8 @@ float water_height(in vec2 p)
   return value / 20.0;
 }
 
+float sd_ball(in vec3 p);
+
 PointMat water_reflection(in vec3 p, in vec3 n, in vec3 camera, in Light light)
 {
   const float max_t = 50.0;
@@ -246,18 +249,25 @@ PointMat water_reflection(in vec3 p, in vec3 n, in vec3 camera, in Light light)
 
   for (int i = 0; i < 256 && t <= max_t; i++) {
     q = 0.002 * n + p + t * ray_dir;
+#ifdef REFLECT_ENTIRE_SCENE
     DistMat scene = sd_scene_no_water(q);
     if (scene.dist < 0.001) {
       return PointMat(q, scene.mat);
     }
     t += scene.dist;
+#else
+    float dist = sd_ball(q);
+    if (dist < 0.001) {
+      return PointMat(q, MATERIAL_BALL);
+    }
+    t += dist;
+#endif
   }
 
-  return PointMat(q, MATERIAL_NONE);
+  return PointMat(q, MATERIAL_WATER);
 }
 
 float sd_pool(in vec3 p);
-float sd_ball(in vec3 p);
 
 PointMat water_refraction(in vec3 p, in vec3 n, in vec3 camera, in Light light)
 {
@@ -493,12 +503,20 @@ vec3 render(in vec3 camera, in vec3 ray_dir)
   if (scene.mat == MATERIAL_WATER) {
     PointMat refl = water_reflection(p, n, camera, light);
     PointMat refr = water_refraction(p, n, camera, light);
+
+    color = 0.2 * color + 0.7 * render_color(refr.p, calc_normal(refr.p), refr.mat, camera);
+
     vec3 view_dir = normalize(camera - p);
     float fresnel = pow(clamp(1.0 - dot(view_dir, n), 0.0, 1.0), 5.0);
-    // XXX: Get rid of reflections?
-    color = 0.2 * color +
-      0.7 * render_color(refr.p, calc_normal(refr.p), refr.mat, camera) +
-      0.1 * fresnel * render_color(refl.p, calc_normal(refl.p), refl.mat, camera);
+
+#ifdef REFLECT_ENTIRE_SCENE
+    color += 0.1 * fresnel * render_color(refl.p, calc_normal(refl.p), refl.mat, camera);
+#else
+    if (refl.mat == MATERIAL_BALL) {
+      const Material mat = Material(vec3(1.0, 0.0, 0.0), 0.3, 0.6, 1.0, 60.0);
+      color += 0.1 * fresnel * calc_color(refl.p, calc_normal(refl.p), camera, light, mat);
+    }
+#endif
   }
 
   return color;
