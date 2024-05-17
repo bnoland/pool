@@ -391,18 +391,54 @@ DistMat sd_scene(in vec3 p)
 
 /* -------------------------------- Textures -------------------------------- */
 
-// XXX: Sampled textures?
-
 vec3 tile_texture(in vec2 uv)
 {
   vec2 q = round(uv);
   return vec3(mix(smoothstep(0.0, 0.07, abs(uv.x - q.x)), smoothstep(0.0, 0.07, abs(uv.y - q.y)), 0.5));
 }
 
+vec3 tile_texture_sampled(in vec2 uv, in vec2 duvdx, in vec2 duvdy)
+{
+  const int max_samples = 5;
+
+  int x_steps = 1 + int(clamp(10.0 * length(duvdx), 0.0, float(max_samples - 1)));
+  int y_steps = 1 + int(clamp(10.0 * length(duvdy), 0.0, float(max_samples - 1)));
+
+  vec3 total = vec3(0.0);
+
+  for (int i = ZERO; i < x_steps; i++) {
+    for (int j = ZERO; j < y_steps; j++) {
+      vec2 st = vec2(i, j) / vec2(x_steps, y_steps);
+      total += tile_texture(uv + st.x * duvdx + st.y * duvdy);
+    }
+  }
+
+  return total / (float(x_steps) * float(y_steps));
+}
+
 vec3 checker_texture(in vec2 uv)
 {
   vec2 q = round(uv);
   return vec3(smoothstep(0.0, 0.03, abs(uv.x - q.x) - abs(uv.y - q.y)));
+}
+
+vec3 checker_texture_sampled(in vec2 uv, in vec2 duvdx, in vec2 duvdy)
+{
+  const int max_samples = 5;
+
+  int x_steps = 1 + int(clamp(10.0 * length(duvdx), 0.0, float(max_samples - 1)));
+  int y_steps = 1 + int(clamp(10.0 * length(duvdy), 0.0, float(max_samples - 1)));
+
+  vec3 total = vec3(0.0);
+
+  for (int i = ZERO; i < x_steps; i++) {
+    for (int j = ZERO; j < y_steps; j++) {
+      vec2 st = vec2(i, j) / vec2(x_steps, y_steps);
+      total += checker_texture(uv + st.x * duvdx + st.y * duvdy);
+    }
+  }
+
+  return total / (float(x_steps) * float(y_steps));
 }
 
 /* -------------------------------- Rendering ------------------------------- */
@@ -424,16 +460,16 @@ vec3 render_color(in vec3 p, in vec3 n, in int mat, in vec3 camera)
       m = Material(vec3(0.8), 0.6, 1.0, 0.0, 1.0);
       break;
     case MATERIAL_GROUND:
-      m = Material(checker_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
+      m = Material(checker_texture_sampled(p.xz, dFdx(p.xz), dFdy(p.xz)), 0.6, 1.0, 0.0, 1.0);
       break;
     case MATERIAL_CEILING:
-      m = Material(tile_texture(p.xz), 0.6, 1.0, 0.0, 1.0);
+      m = Material(tile_texture_sampled(p.xz, dFdx(p.xz), dFdy(p.xz)), 0.6, 1.0, 0.0, 1.0);
       break;
     case MATERIAL_WALL_XY:
-      m = Material(tile_texture(p.xy), 0.6, 1.0, 0.0, 1.0);
+      m = Material(tile_texture_sampled(p.xy, dFdx(p.xy), dFdy(p.xy)), 0.6, 1.0, 0.0, 1.0);
       break;
     case MATERIAL_WALL_ZY:
-      m = Material(tile_texture(p.zy), 0.6, 1.0, 0.0, 1.0);
+      m = Material(tile_texture_sampled(p.zy, dFdx(p.zy), dFdy(p.zy)), 0.6, 1.0, 0.0, 1.0);
       break;
     case MATERIAL_LIGHT1:
       if (g_active_light == 0) return light.color + 0.3;
